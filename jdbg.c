@@ -3,6 +3,7 @@
 #include <jvmti.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h> // for usleep
 
 static jrawMonitorID lock;
 typedef struct jvm_data {
@@ -42,35 +43,38 @@ void JNICALL vmInit(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread) {
   jclass source = (*jni_env)->FindClass(jni_env, "Source");
   if (source == NULL) { printf("class not found\n"); }
 
-  jint method_counter;
-  jmethodID *method_ptr;
-  if ((*jvmti_env)->GetClassMethods(jvmti_env, source, &method_counter, &method_ptr) != JVMTI_ERROR_NONE) {
-    printf("Failed to get class methods\n");
-    return;
-  }
-
-  for (int i = 0; i < method_counter; i++) {
-    char *name;
-    (*jvmti_env)->GetMethodName(jvmti_env, method_ptr[i], &name, NULL, NULL);
-    printf("%i : %s\n", i, name);
-  }
-  jvmtiLineNumberEntry *line_entry;
-  jint entry_count;
-  (*jvmti_env)->GetLineNumberTable(jvmti_env, method_ptr[2], &entry_count, &line_entry);
-  jlocation first = line_entry[1].start_location;
-  (*jvmti_env)->SetBreakpoint(jvmti_env, method_ptr[2], 0);
-  jint error = (*jvmti_env)->SetEventNotificationMode(jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_BREAKPOINT, thread);
+  jint error2 = (*jvmti_env)->SetEventNotificationMode(jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_BREAKPOINT, thread);
 }
 
 void JNICALL Breakpoint(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jmethodID method, jlocation location) {
-  printf("breakpoint hit, thread interrupted\n");
+  printf("breakpoint hit\n");
   jint entry_count;
-
   jvmtiLocalVariableEntry *variables;
   (*jvmti_env)->GetLocalVariableTable(jvmti_env, method, &entry_count, &variables);
   for (int i = 0; i < entry_count; i++) {
     jvmtiLocalVariableEntry j = variables[i];
     printf("name : %s\n", j.name);
+  }
+}
+
+void JNICALL ClassPrepare(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jclass klass) {
+  jint method_counter;
+  jmethodID *method_ptr;
+  if ((*jvmti_env)->GetClassMethods(jvmti_env, klass, &method_counter, &method_ptr) != JVMTI_ERROR_NONE) {
+    printf("Failed to get class methods\n");
+    return;
+  }
+  for (int i = 0; i < method_counter; i++) {
+    char *name;
+    (*jvmti_env)->GetMethodName(jvmti_env, method_ptr[i], &name, NULL, NULL);
+    if (strcmp(name, "example") == 0) {
+      jvmtiLineNumberEntry *line_entry;
+      jint entry_count;
+      (*jvmti_env)->GetLineNumberTable(jvmti_env, method_ptr[i], &entry_count, &line_entry);
+      jlocation first = line_entry[2] .start_location;
+      (*jvmti_env)->SetBreakpoint(jvmti_env, method_ptr[i], first);
+      break;
+    }
   }
 }
 
@@ -88,6 +92,11 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
   capa.can_generate_breakpoint_events = 1;
   capa.can_tag_objects = 1;
   capa.can_get_monitor_info = 1;
+  capa.can_generate_garbage_collection_events = 1;
+  capa.can_retransform_any_class = 1;
+  capa.can_tag_objects = 1;
+  capa.can_generate_all_class_hook_events = 1;
+  capa.can_get_line_numbers = 1;
   capa.can_get_thread_cpu_time = 1;
   capa.can_get_current_thread_cpu_time = 1;
   capa.can_suspend = 1;
@@ -95,7 +104,9 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
   (*global_data.env)->AddCapabilities(global_data.env, &capa);
 
   jint error = (*global_data.env)->SetEventNotificationMode(global_data.env, JVMTI_ENABLE, JVMTI_EVENT_VM_INIT, (jthread)NULL);
-  error =      (*global_data.env)->SetEventNotificationMode(global_data.env, JVMTI_ENABLE, JVMTI_EVENT_VM_START, (jthread)NULL);
+  error = (*global_data.env)->SetEventNotificationMode(global_data.env, JVMTI_ENABLE, JVMTI_EVENT_VM_START, (jthread)NULL);
+  error = (*global_data.env)->SetEventNotificationMode(global_data.env, JVMTI_ENABLE, JVMTI_EVENT_CLASS_PREPARE, (jthread)NULL);
+  error = (*global_data.env)->SetEventNotificationMode(global_data.env, JVMTI_ENABLE, JVMTI_EVENT_BREAKPOINT, (jthread)NULL);
   if (error != JVMTI_ERROR_NONE) {
     printf("JDBG Agent error: %i", error);
     return JNI_ABORT;
@@ -105,6 +116,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
   callbacks.VMInit = &vmInit;
   callbacks.Breakpoint = &Breakpoint;
   callbacks.SingleStep = &SingleStep;
+  callbacks.ClassPrepare = &ClassPrepare;
 
   (*global_data.env)->SetEventCallbacks(global_data.env, &callbacks, sizeof(callbacks));
   gdata.vm = vm;
