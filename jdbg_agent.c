@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "jdbg.h"
 
 static jrawMonitorID lock;
 typedef struct jvm_data {
@@ -12,6 +13,8 @@ typedef struct jvm_data {
 } jvm_data;
 
 jvm_data gdata;
+
+jdbg_conf *debug_conf;
 
 void JNICALL vmInit(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread) {
   jint class_count;
@@ -41,7 +44,10 @@ void JNICALL vmInit(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread) {
   }
 
   jclass source = (*jni_env)->FindClass(jni_env, "Source");
-  if (source == NULL) { printf("class not found\n"); }
+  if (source == NULL) { 
+    printf("class not found\n"); 
+    return;
+  }
 
   jint error2 = (*jvmti_env)->SetEventNotificationMode(jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_BREAKPOINT, thread);
 }
@@ -54,6 +60,12 @@ void JNICALL Breakpoint(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jm
   for (int i = 0; i < entry_count; i++) {
     jvmtiLocalVariableEntry j = variables[i];
     printf("name : %s\n", j.name);
+  }
+
+  printf("[debug] debug conf\n");
+
+  for(int i = 0; i < debug_conf->bp_list.last; i++) {
+    printf("class: %s\n", debug_conf->bp_list.items[i].class);
   }
 }
 
@@ -76,6 +88,7 @@ void JNICALL ClassPrepare(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, 
       break;
     }
   }
+
 }
 
 void JNICALL SingleStep(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jmethodID method, jlocation location) {
@@ -83,6 +96,9 @@ void JNICALL SingleStep(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jm
 }
 
 JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
+  debug_conf = malloc(sizeof(jdbg_conf));
+  read_breakpoints_from_file(debug_conf, "symbols.dbg");
+
   jvm_data global_data;
   printf("JDBG AGENT: Loading\n");
   (*vm)->GetEnv(vm, &global_data.env, JVMTI_VERSION_1_0); 
