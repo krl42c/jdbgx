@@ -22,11 +22,12 @@ while True:
       class_name = cmds[1]
       method_name = cmds[2]
       line = cmds[3]
-      sym_t.write(f'{class_name}:{method_name}:{line}\n')
+      sym_t.write(f'{class_name}:{method_name}:{line}')
     except IndexError:
       print('Wrong bp format')
   if r == 'exit': break
   if r == 'run': 
+    sym_t.close()
     result = subprocess.run(["java", "-agentpath:./agent.so", "-Xdebug", prog], capture_output=True, text=True).stdout.strip("\n")
     print(result)
     break    
