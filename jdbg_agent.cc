@@ -2,14 +2,35 @@
 #include <stdio.h>
 #include <jvmti.h>
 #include <stdlib.h>
-#include <string.h>
+#include <string>
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
 
-typedef struct jvm_data {
-  jvmtiEnv *env;
-  JavaVM *vm;
-} jvm_data;
+struct Break {
+  std::string class_name;
+  std::string method_name;
+  std::string line;
+};
+std::vector<Break> global_bp_list;
 
-jvm_data gdata;
+std::vector<Break> load_breakpoints_from_table(std::string sym_table) {
+  auto result = std::vector<Break>();
+  std::istringstream iss(sym_table);
+  std::string line;
+
+  while(std::getline(iss, line, '\n')) {
+    std::istringstream lineStream(line);
+    std::string token;
+    Break br;
+    std::getline(lineStream, br.class_name, ':');
+    std::getline(lineStream, br.method_name, ':');
+    lineStream >> br.line;
+    result.push_back(br);  
+  }
+  return result;
+}
 
 void JNICALL vmInit(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread) {
   jint class_count;
@@ -63,36 +84,56 @@ void JNICALL ClassPrepare(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, 
   jmethodID *method_ptr;
   char *signature;
   jvmtiError err = jvmti_env->GetClassSignature(klass, &signature, NULL);
-  printf("%s\n", signature);
-
-  if (jvmti_env->GetClassMethods(klass, &method_counter, &method_ptr) != JVMTI_ERROR_NONE) {
-    printf("Failed to get class methods\n");
-    return;
-  }
-  for (int i = 0; i < method_counter; i++) {
-    char *name;
-    jvmti_env->GetMethodName(method_ptr[i], &name, NULL, NULL);
-    if (1 == 2) {
-      jvmtiLineNumberEntry *line_entry;
-      jint entry_count;
-      jvmti_env->GetLineNumberTable(method_ptr[i], &entry_count, &line_entry);
-      jlocation first = line_entry[2] .start_location;
-      jvmti_env->SetBreakpoint(method_ptr[i], first);
-      break;
+  for (auto &b : global_bp_list) {
+    if (("L" + b.class_name + ";") == signature) {
+      if (jvmti_env->GetClassMethods(klass, &method_counter, &method_ptr) != JVMTI_ERROR_NONE) {
+        printf("Failed to get class methods\n");
+        return;
+      } else {
+        for (int i = 0; i < method_counter; i++) {
+          char *name;
+          jvmti_env->GetMethodName(method_ptr[i], &name, NULL, NULL);
+          
+          if (1 == 2) {
+            jvmtiLineNumberEntry *line_entry;
+            jint entry_count;
+            jvmti_env->GetLineNumberTable(method_ptr[i], &entry_count, &line_entry);
+            jlocation first = line_entry[2] .start_location;
+            jvmti_env->SetBreakpoint(method_ptr[i], first);
+            break;
+          }
+        }
+      }
     }
   }
-}
+  //printf("%s\n", signature);
 
-void JNICALL SingleStep(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jmethodID method, jlocation location) {
-  
 }
 
 JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
   printf("JDBG AGENT: Loading\n");
-  jvmtiEnv *env = nullptr;
-  vm->GetEnv((void**)&env, JVMTI_VERSION_1_0); 
+  std::ifstream t("symbols.dbg");
+  std::string str;
 
-  printf("got env\n");
+  t.seekg(0, std::ios::end);   
+  str.reserve(t.tellg());
+  t.seekg(0, std::ios::beg);
+
+  std::string data;
+  data.reserve(t.tellg());
+
+  data.assign((std::istreambuf_iterator<char>(t)),
+              std::istreambuf_iterator<char>());
+
+  global_bp_list = load_breakpoints_from_table(data);
+  std::cout << "Loaded breakpoint list successfuly\n";
+  for(auto &b : global_bp_list) {
+    std::cout << b.class_name << " : " << b.method_name << " : " << b.line << '\n';
+  }
+
+  jvmtiEnv *env = nullptr;
+  vm->GetEnv((void**)&env, JVMTI_VERSION_11); 
+
   jvmtiCapabilities capa;
   capa.can_access_local_variables = 1;
   capa.can_signal_thread = 1;
@@ -121,14 +162,13 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
   jvmtiEventCallbacks callbacks;
   callbacks.VMInit = &vmInit;
   callbacks.Breakpoint = &Breakpoint;
-  callbacks.SingleStep = &SingleStep;
   callbacks.ClassPrepare = &ClassPrepare;
      
   env->SetEventCallbacks(&callbacks, sizeof(callbacks));
-  gdata.vm = vm;
   return JNI_OK;
 }
 
 JNIEXPORT void JNICALL 
 Agent_OnUnload(JavaVM *vm) {
+  printf("JDBG AGENT: Unloaded\n");
 }
