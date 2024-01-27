@@ -93,21 +93,23 @@ void JNICALL ClassPrepare(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, 
         for (int i = 0; i < method_counter; i++) {
           char *name;
           jvmti_env->GetMethodName(method_ptr[i], &name, NULL, NULL);
-          
-          if (1 == 2) {
+          if (name == b.method_name) {
             jvmtiLineNumberEntry *line_entry;
             jint entry_count;
             jvmti_env->GetLineNumberTable(method_ptr[i], &entry_count, &line_entry);
-            jlocation first = line_entry[2] .start_location;
-            jvmti_env->SetBreakpoint(method_ptr[i], first);
+            jlocation location;
+            for(size_t line_index = 0; line_index < entry_count; line_index++) {
+              if (line_entry[line_index].line_number == std::stoi(b.line)) {
+               location = line_entry[line_index].start_location;
+              }
+            }
+            jvmti_env->SetBreakpoint(method_ptr[i], location);
             break;
           }
         }
       }
     }
   }
-  //printf("%s\n", signature);
-
 }
 
 JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
