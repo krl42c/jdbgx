@@ -5,31 +5,42 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <vector>
+#include <ranges>
 
 struct Break {
-  std::string class_name;
+  //std::string class_name;
   std::string method_name;
   std::string line;
 };
-std::vector<Break> global_bp_list;
 
-std::vector<Break> load_breakpoints_from_table(std::string sym_table) {
-  auto result = std::vector<Break>();
+static std::map<std::string, std::vector<Break>> CLASS_BP_MAP;
+
+std::map<std::string, std::vector<Break>> load_breakpoints_from_table(std::string sym_table) {
+  auto break_map = std::map<std::string, std::vector<Break>>();
   std::istringstream iss(sym_table);
   std::string line;
 
+  std::string class_name;
   while(std::getline(iss, line, '\n')) {
     std::istringstream lineStream(line);
     std::string token;
     Break br;
-    std::getline(lineStream, br.class_name, ':');
+    std::getline(lineStream, class_name, ':');
+
     std::getline(lineStream, br.method_name, ':');
     lineStream >> br.line;
-    result.push_back(br);  
+    if(break_map.find(class_name) != break_map.end()) {
+      break_map.at(class_name).push_back(br);
+    } else {
+      break_map.emplace(class_name, std::vector<Break>());
+      break_map.at(class_name).push_back(br);
+    }
   }
-  return result;
+
+  return break_map;
 }
 
 void JNICALL vmInit(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread) {
@@ -80,36 +91,39 @@ void JNICALL Breakpoint(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jm
 }
 
 void JNICALL ClassPrepare(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jclass klass) {
-  jint method_counter;
-  jmethodID *method_ptr;
-  char *signature;
-  jvmtiError err = jvmti_env->GetClassSignature(klass, &signature, NULL);
-  for (auto &b : global_bp_list) {
-    if (("L" + b.class_name + ";") == signature) {
-      if (jvmti_env->GetClassMethods(klass, &method_counter, &method_ptr) != JVMTI_ERROR_NONE) {
-        printf("Failed to get class methods\n");
-        return;
-      } else {
-        for (int i = 0; i < method_counter; i++) {
-          char *name;
-          jvmti_env->GetMethodName(method_ptr[i], &name, NULL, NULL);
-          if (name == b.method_name) {
-            jvmtiLineNumberEntry *line_entry;
-            jint entry_count;
-            jvmti_env->GetLineNumberTable(method_ptr[i], &entry_count, &line_entry);
-            jlocation location;
-            for(size_t line_index = 0; line_index < entry_count; line_index++) {
-              if (line_entry[line_index].line_number == std::stoi(b.line)) {
-               location = line_entry[line_index].start_location;
+  jint       method_counter;
+  jmethodID  *method_ptr;
+  char       *signature_ptr;
+
+  jvmtiError err = jvmti_env->GetClassSignature(klass, &signature_ptr, NULL);
+  auto       signature = std::string(signature_ptr);
+
+  if (CLASS_BP_MAP.find(signature) != CLASS_BP_MAP.end()) {
+    auto bp_methods = CLASS_BP_MAP.at(signature);
+    jvmti_env->GetClassMethods(klass, &method_counter, &method_ptr);
+
+    for(int i = 0; i < method_counter; i++) {
+      char* method_name;
+      jvmti_env->GetMethodName(method_ptr[i], &method_name, NULL, NULL);
+
+      for(auto &bp : bp_methods) {
+        if (std::string(method_name) == bp.method_name) {
+          jvmtiLineNumberEntry *line_entry;
+          jint entry_count;
+          jvmti_env->GetLineNumberTable(method_ptr[i], &entry_count, &line_entry);
+          for(size_t line_index = 0; line_index < entry_count; line_index++) {
+            if (line_entry[line_index].line_number == std::stoi(bp.line)) {
+              std::cout << "Setting breakpoint at: " << bp.method_name << " line: " << bp.line << '\n';
+              jint err = jvmti_env->SetBreakpoint(method_ptr[i], line_entry[line_index].start_location);
+              if(err != JVMTI_ERROR_NONE) {
+                std::cout << "Error while setting breakpoint: " << err << '\n';
               }
             }
-            jvmti_env->SetBreakpoint(method_ptr[i], location);
-            break;
           }
         }
       }
     }
-  }
+ }
 }
 
 JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
@@ -127,11 +141,8 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
   data.assign((std::istreambuf_iterator<char>(t)),
               std::istreambuf_iterator<char>());
 
-  global_bp_list = load_breakpoints_from_table(data);
+  CLASS_BP_MAP = load_breakpoints_from_table(data);
   std::cout << "Loaded breakpoint list successfuly\n";
-  for(auto &b : global_bp_list) {
-    std::cout << b.class_name << " : " << b.method_name << " : " << b.line << '\n';
-  }
 
   jvmtiEnv *env = nullptr;
   vm->GetEnv((void**)&env, JVMTI_VERSION_11); 
