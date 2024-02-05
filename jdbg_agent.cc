@@ -118,12 +118,12 @@ void JNICALL Breakpoint(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jm
       case JAVA_TYPE::FLOAT:
         jfloat value_ptr_f;
         jvmti_env->GetLocalFloat(thread, 0, j.slot, &value_ptr_f);
-        debug_variable_helper<jint>(j.name, value_ptr_f);
+        debug_variable_helper<jfloat>(j.name, value_ptr_f);
         break;
       case JAVA_TYPE::DOUBLE:
         jdouble value_ptr_d;
         jvmti_env->GetLocalDouble(thread, 0, j.slot, &value_ptr_d);
-        debug_variable_helper<jint>(j.name, value_ptr_d);
+        debug_variable_helper<jdouble>(j.name, value_ptr_d);
         break;
       case JAVA_TYPE::STRING:
         jvmti_env->GetLocalObject(thread, 0, j.slot, &obj_value_ptr);
