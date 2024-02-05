@@ -11,12 +11,33 @@
 #include <ranges>
 
 struct Break {
-  //std::string class_name;
   std::string method_name;
   std::string line;
 };
 
 static std::map<std::string, std::vector<Break>> CLASS_BP_MAP;
+
+enum JAVA_TYPE {
+  INT = 0,
+  DOUBLE,
+  LONG,
+  BOOLEAN,
+  CHAR,
+  FLOAT,
+  STRING
+};
+
+static std::map<std::string, JAVA_TYPE> TYPES_MAP = {
+  {"I", JAVA_TYPE::INT},
+  {"D", JAVA_TYPE::DOUBLE},
+  {"F", JAVA_TYPE::FLOAT},
+  {"Ljava/lang/String;", JAVA_TYPE::STRING},
+};
+
+template<typename T>
+void debug_variable_helper(const char *name, T jval) {
+  std::cout << "[debug_loc_var] " << name << " = " << jval << '\n';
+}
 
 std::map<std::string, std::vector<Break>> load_breakpoints_from_table(std::string sym_table) {
   auto break_map = std::map<std::string, std::vector<Break>>();
@@ -80,16 +101,40 @@ void JNICALL vmInit(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread) {
 }
 
 void JNICALL Breakpoint(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jmethodID method, jlocation location) {
-  printf("breakpoint hit\n");
+  printf("[debug_breakpoint] breakpoint hit\n");
   jint entry_count;
   jvmtiLocalVariableEntry *variables;
   jvmti_env->GetLocalVariableTable(method, &entry_count, &variables);
   for (int i = 0; i < entry_count; i++) {
     jvmtiLocalVariableEntry j = variables[i];
-    printf("[debug] [var] name : %s\n", j.name);
+    auto type = TYPES_MAP.at(j.signature);
+    jobject obj_value_ptr;
+    switch(type) {
+      case JAVA_TYPE::INT:
+        jint value_ptr_i;
+        jvmti_env->GetLocalInt(thread, 0, j.slot, &value_ptr_i);
+        debug_variable_helper<jint>(j.name, value_ptr_i);
+        break;
+      case JAVA_TYPE::FLOAT:
+        jfloat value_ptr_f;
+        jvmti_env->GetLocalFloat(thread, 0, j.slot, &value_ptr_f);
+        debug_variable_helper<jint>(j.name, value_ptr_f);
+        break;
+      case JAVA_TYPE::DOUBLE:
+        jdouble value_ptr_d;
+        jvmti_env->GetLocalDouble(thread, 0, j.slot, &value_ptr_d);
+        debug_variable_helper<jint>(j.name, value_ptr_d);
+        break;
+      case JAVA_TYPE::STRING:
+        jvmti_env->GetLocalObject(thread, 0, j.slot, &obj_value_ptr);
+        break;
+      default:
+        printf("err\n");
+    }
   }
 }
 
+// @TODO: refactor
 void JNICALL ClassPrepare(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jclass klass) {
   jint       method_counter;
   jmethodID  *method_ptr;
